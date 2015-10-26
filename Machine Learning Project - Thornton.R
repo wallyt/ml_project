@@ -95,7 +95,9 @@ workTrain <- workTrain[,-as.integer(rownames(missing[missing$propmiss > 0.9,]))]
 cor <- cor(workTrain[,-53])
 corrplot.mixed(cor, order="AOE")
 
-
+# Plot the predictors...can use featurePlot() from caret and look for variables that seem to show a relationship
+# with the Y variable (outcome). 
+# could also do ggplot scatterplots one by one (and color by another class) to zoom in and look for odd things
 # * Prime factor analysis with all of them
 
 

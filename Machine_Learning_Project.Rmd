@@ -1,0 +1,173 @@
+---
+title: "Machine_Learning_Project"
+author: "Wally Thornton"
+date: "October 25, 2015"
+output: html_document
+---
+##Executive Summary
+```{r setup}
+knitr::opts_chunk$set(fig.width=7, echo=F, message=F, warning=F)
+options(scipen=999)
+ensurePkg <- function(x) {
+    if (!require(x,character.only = TRUE)) {
+        install.packages(x,dep=TRUE, repos="http://cran.r-project.org")
+        if(!require(x,character.only = TRUE)) stop("Package not found")
+    }
+}
+
+ensurePkg("caret")
+ensurePkg("ggplot2")
+ensurePkg("dplyr")
+#ensurePkg("rattle")
+ensurePkg("corrplot")
+ensurePkg("randomForest")
+set.seed(42)
+
+train <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+```
+
+```{r splitData}
+trainI <- createDataPartition(train$classe, p = 0.70, list=F)
+training <- train[trainI, ]
+validation <- train[-trainI, ]
+```
+
+```{r exploreAndCleanData}
+# Plot predictors, look for issues
+# Look for skewing among predictors
+
+workTrain <- training
+
+# Remove summary variables
+# avg*, stddev*, var*, min*, max* are all summary statistics and 100% NAs in the testing data
+workTrain <- workTrain  %>% dplyr::select(-starts_with("avg"), 
+                             -starts_with("stddev"),
+                             -starts_with("var"), 
+                             -starts_with("min"), 
+                             -starts_with("max"),
+                             -contains("timestamp"),
+                             -contains("window"),
+                             -X,
+                             -user_name)
+
+# Likewise, there are factors that have only "" and "#DIV/O" as factors:
+workTrain <- workTrain %>% dplyr::select(-kurtosis_yaw_belt, 
+                                         -skewness_yaw_belt, 
+                                         -kurtosis_yaw_dumbbell, 
+                                         -amplitude_yaw_belt, 
+                                         -skewness_yaw_dumbbell, 
+                                         -amplitude_yaw_dumbbell, 
+                                         -kurtosis_yaw_forearm, 
+                                         -skewness_yaw_forearm, 
+                                         -amplitude_yaw_forearm)
+
+#Remove variables with high proportion of missing data
+propmiss <- function(dataframe) {
+    m <- sapply(dataframe, function(x) {
+        data.frame(
+            nmiss=sum(is.na(x)), 
+            n=length(x), 
+            propmiss=sum(is.na(x))/length(x)
+        )
+    })
+    d <- data.frame(t(m))
+    d <- sapply(d, unlist)
+    d <- as.data.frame(d)
+    d$variable <- row.names(d)
+    row.names(d) <- NULL
+    d <- cbind(d[ncol(d)],d[-ncol(d)])
+    return(d[order(d$propmiss), ])
+}
+
+missing <- propmiss(workTrain)
+workTrain <- workTrain[,-as.integer(rownames(missing[missing$propmiss > 0.9,]))]
+
+# Look for variables with just a few NAs and impute (none left)
+propmiss(workTrain)[2] > 0
+
+# Remove variables that have too few values (zero covariates)
+#saveMetrics=T will give a data frame with frequency, %unique, actual zeroVar and nzv
+nsv <- nearZeroVar(workTrain, saveMetrics = F)
+workTrain <- workTrain[,-nsv]
+
+# Explore the resulting predictor set a bit
+featurePlot(workTrain[,-53], workTrain[,53])
+
+M <- abs(cor(workTrain[,-53]))
+diag(M) <- 0 #to get rid of the 1:1 correlation with selves
+which(M > 0.8, arr.ind=T) #To find correlations > 0.8
+
+# * Look for collinearity among variables
+cor <- cor(workTrain[,-53])
+cor <- which(cor > 0.8, arr.ind = T)
+corrplot.mixed(cor, order="AOE")
+
+# Use PCA
+preProc <- preProcess(workTrain[, -53], method="pca")
+```
+
+
+```{r regression}
+# * Binary classifier with A vs. B+C+D+E (why are they trying to predict WHICH incorrect form is being used..we only
+#   care if the correct form is used)
+# * With binary classifier, try logistic regression
+binaryTrain <- workTrain
+binaryTrain$classeBinary <- 0
+binaryTrain$classeBinary[binaryTrain$classe == "A"] <- 1
+binaryTrain$classe <- NULL
+binaryTrain$classeBinary <- as.factor(binaryTrain$classeBinary)
+
+
+fitLogi <- glm(classeBinary ~ ., data = binaryTrain, na.action = na.omit, control = list(maxit = 50), family = "binomial")
+fitGLM <- train(classeBinary ~ ., method="glm", data = binaryTrain)
+fitGLM2 <- train(classeBinary ~ ., method="glm", data=binaryTrain, preProcess = c("center","scale"))
+ensurePkg("pROC")
+plot.roc(binaryTrain$classeBinary,fitted(fitLogi),print.auc = TRUE)
+test <- predict(fitGLM, newdata=validation)
+
+#Problem1: can't touch testing set so can't convert outcome to binary
+#Problem2: project submission is prediction of A-E not just A or !A
+#Decision: drop regression effort
+```
+
+```{r randomForest}
+fitRF <- randomForest(classe ~ ., ntree = 1000, importance = T, keep.forest=F, data=workTrain)
+fitRFT <- train(classe ~ ., ntree = 1000, importance = T, method = "rf", data = workTrain)
+fitRF$confusion
+confusionMatrix(validation$classe, predict(fitRF, validation)) #99.5% accuracy
+```
+
+```{r adaBoost}
+# Boosting usually one of the top two performing algorithms (along with RF) in prediction contests
+```
+
+```{r confusionMatrix}
+# Pick best model
+```
+
+```{r refineWinner}
+varImpPlot(fitRF, n.var=10, main="Top 10 Most Important Predictors")
+varImp(fitRF, scale=F)
+
+plot(yaw_belt, roll_belt, color=classe, data=workTrain)
+# Bagging is where m=p, so try mtry=53
+#add preprocess
+#Experiment to see if the model can be made more parsimonious
+# Need cross validation...here or in preprocessing?
+```
+
+```{r auc}
+```
+
+```{r modelPlot}
+```
+
+```{r validation}
+```
+
+```{r outOfSampleError}
+```
+
+```{r test}
+```
