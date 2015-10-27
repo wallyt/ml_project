@@ -1,7 +1,7 @@
 ---
-title: "Machine_Learning_Project"
+title: "Machine Learning Project"
 author: "Wally Thornton"
-date: "October 25, 2015"
+date: "November 25, 2015"
 output: html_document
 ---
 ##Executive Summary
@@ -18,9 +18,9 @@ ensurePkg <- function(x) {
 ensurePkg("caret")
 ensurePkg("ggplot2")
 ensurePkg("dplyr")
-#ensurePkg("rattle")
 ensurePkg("corrplot")
 ensurePkg("randomForest")
+ensurePkg("adabag")
 set.seed(42)
 
 train <- read.csv("pml-training.csv")
@@ -92,7 +92,7 @@ nsv <- nearZeroVar(workTrain, saveMetrics = F)
 workTrain <- workTrain[,-nsv]
 
 # Explore the resulting predictor set a bit
-featurePlot(workTrain[,-53], workTrain[,53])
+#featurePlot(workTrain[,-53], workTrain[,53])
 
 M <- abs(cor(workTrain[,-53]))
 diag(M) <- 0 #to get rid of the 1:1 correlation with selves
@@ -103,10 +103,19 @@ cor <- cor(workTrain[,-53])
 cor <- which(cor > 0.8, arr.ind = T)
 corrplot.mixed(cor, order="AOE")
 
-# Use PCA
-preProc <- preProcess(workTrain[, -53], method="pca")
 ```
 
+```{r basicTree}
+fitTree <- train(classe ~ ., method="rpart", data = workTrain)
+ensurePkg("rattle")
+fancyRpartPlot(fitTree$finalModel)
+confusionMatrix(predict(fitTree, validation), validation$classe) #48.85% accuracy
+
+cvCtrl <- trainControl(method = "repeatedcv", repeats = 3)
+fitTree2 <- train(classe ~ ., method = "rpart", data = workTrain, trControl = cvCtrl)
+fancyRpartPlot(fitTree2$finalModel)
+confusionMatrix(predict(fitTree2, validation), validation$classe) #48.85% accuracy
+```
 
 ```{r regression}
 # * Binary classifier with A vs. B+C+D+E (why are they trying to predict WHICH incorrect form is being used..we only
@@ -132,14 +141,29 @@ test <- predict(fitGLM, newdata=validation)
 ```
 
 ```{r randomForest}
-fitRF <- randomForest(classe ~ ., ntree = 1000, importance = T, keep.forest=F, data=workTrain)
-fitRFT <- train(classe ~ ., ntree = 1000, importance = T, method = "rf", data = workTrain)
+fitRF <- randomForest(classe ~ ., importance = T, data=workTrain)
+#fitRFT <- train(classe ~ ., ntree = 1000, importance = T, method = "rf", data = workTrain)
 fitRF$confusion
-confusionMatrix(validation$classe, predict(fitRF, validation)) #99.5% accuracy
+confusionMatrix(predict(fitRF, validation), validation$classe) #99.5% accuracy
+#confusionMatrix(predict(fitRFT, validation), validation$classe) #99.14% accuracy and 4 hours to run
 ```
 
 ```{r adaBoost}
 # Boosting usually one of the top two performing algorithms (along with RF) in prediction contests
+fitAB <- boosting(classe ~ ., data = workTrain)
+fitABPred <- predict.boosting(fitAB, validation)
+fitABPred$confusion
+
+ensurePkg("doParallel")
+corecount <- detectCores()
+cl <- makeCluster(corecount * 0.75)
+registerDoParallel(cl)
+getDoParWorkers()
+fitABT <- train(classeBinary ~ ., method="ada", data=binaryTrain)
+stopCluster(cl)
+summary(fitABT) #96.4% accuracy
+
+confusionMatrix(predict(fitABT, validation), validation$classe)
 ```
 
 ```{r confusionMatrix}
@@ -150,9 +174,24 @@ confusionMatrix(validation$classe, predict(fitRF, validation)) #99.5% accuracy
 varImpPlot(fitRF, n.var=10, main="Top 10 Most Important Predictors")
 varImp(fitRF, scale=F)
 
-plot(yaw_belt, roll_belt, color=classe, data=workTrain)
-# Bagging is where m=p, so try mtry=53
-#add preprocess
+# Try different ntrees, mtry, etc. vs. default of mtry=sqrt(p), ntree=500
+fitRFBag <- randomForest(classe ~ ., importance = T, mtry=53, data=workTrain) #OOB=1.7%
+confusionMatrix(predict(fitRFBag, validation), validation$classe) #98.5% accuracy
+fitRFTrees <- randomForest(classe ~ ., importance = T, ntree=2000, data=workTrain) #OOB=0.51%
+confusionMatrix(predict(fitRFTrees, validation), validation$classe) #99.5% accuracy
+
+# Try PCA
+pca <- prcomp(workTrain[, -53])
+summary(pca)
+# Picked top 18 to get 99% of variance
+preProc <- preProcess(workTrain[, -53], method="pca", pcaComp = 19)
+trainPC <- predict(preProc, workTrain[, -53])
+fitRFPC <- randomForest(workTrain$classe ~ ., method = "rf", data = trainPC)
+# Results?
+print(fitRFPC) #OOB is much higher than straight RF, so no need to validate
+# Test against validation set
+
+
 #Experiment to see if the model can be made more parsimonious
 # Need cross validation...here or in preprocessing?
 ```
@@ -161,9 +200,6 @@ plot(yaw_belt, roll_belt, color=classe, data=workTrain)
 ```
 
 ```{r modelPlot}
-```
-
-```{r validation}
 ```
 
 ```{r outOfSampleError}

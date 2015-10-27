@@ -129,9 +129,6 @@ fitGLM2 <- train(classeBinary ~ ., method="glm", data=binaryTrain, preProcess = 
 # Test
 test <- predict(fitGLM, newdata=testing)
 
-##Adaboost
-#Train
-#Test
 
 ##Random Forest
 # Cross validation vs. other options because the dataset is sorted by classe so the train/test sets may be imbalanced
