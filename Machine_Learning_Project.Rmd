@@ -140,13 +140,6 @@ test <- predict(fitGLM, newdata=validation)
 #Decision: drop regression effort
 ```
 
-```{r randomForest}
-fitRF <- randomForest(classe ~ ., importance = T, data=workTrain)
-#fitRFT <- train(classe ~ ., ntree = 1000, importance = T, method = "rf", data = workTrain)
-fitRF$confusion
-confusionMatrix(predict(fitRF, validation), validation$classe) #99.5% accuracy
-#confusionMatrix(predict(fitRFT, validation), validation$classe) #99.14% accuracy and 4 hours to run
-```
 
 ```{r adaBoost}
 # Boosting usually one of the top two performing algorithms (along with RF) in prediction contests
@@ -166,15 +159,22 @@ summary(fitABT) #96.4% accuracy
 confusionMatrix(predict(fitABT, validation), validation$classe)
 ```
 
-```{r confusionMatrix}
-# Pick best model
+```{r randomForest}
+fitRF <- randomForest(classe ~ ., importance = T, data=workTrain) #OOB=0.57%
+#fitRFT <- train(classe ~ ., ntree = 1000, importance = T, method = "rf", data = workTrain)
+fitRF$confusion
+confusionMatrix(predict(fitRF, validation), validation$classe) #99.5% accuracy
+#confusionMatrix(predict(fitRFT, validation), validation$classe) #99.14% accuracy and 4 hours to run
 ```
 
 ```{r refineWinner}
+#Experiment to see if the model can be made more parsimonious
 varImpPlot(fitRF, n.var=10, main="Top 10 Most Important Predictors")
 varImp(fitRF, scale=F)
 
-# Try different ntrees, mtry, etc. vs. default of mtry=sqrt(p), ntree=500
+
+
+# Try different ntrees, mtry, vs. default of mtry=sqrt(p), ntree=500
 fitRFBag <- randomForest(classe ~ ., importance = T, mtry=53, data=workTrain) #OOB=1.7%
 confusionMatrix(predict(fitRFBag, validation), validation$classe) #98.5% accuracy
 fitRFTrees <- randomForest(classe ~ ., importance = T, ntree=2000, data=workTrain) #OOB=0.51%
@@ -187,13 +187,11 @@ summary(pca)
 preProc <- preProcess(workTrain[, -53], method="pca", pcaComp = 19)
 trainPC <- predict(preProc, workTrain[, -53])
 fitRFPC <- randomForest(workTrain$classe ~ ., method = "rf", data = trainPC)
-# Results?
 print(fitRFPC) #OOB is much higher than straight RF, so no need to validate
-# Test against validation set
 
-
-#Experiment to see if the model can be made more parsimonious
 # Need cross validation...here or in preprocessing?
+# The out-of-bag (oob) error estimate
+# In random forests, there is no need for cross-validation or a separate test set to get an unbiased estimate of the test set error. It is estimated internally, during the run. http://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm#ooberr
 ```
 
 ```{r auc}
@@ -203,6 +201,8 @@ print(fitRFPC) #OOB is much higher than straight RF, so no need to validate
 ```
 
 ```{r outOfSampleError}
+# Show OOB for the training set, but also:
+# Show the Accuracy % from the confusion matrix when testing on validation and mention cross validation
 ```
 
 ```{r test}
