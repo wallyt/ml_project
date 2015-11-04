@@ -17,7 +17,8 @@ ensurePkg <- function(x) {
 }
 
 ensurePkg("caret")
-ensurePkg("ggplot2")
+# ensurePkg("ggplot2")
+ensurePkg("plyr")
 ensurePkg("dplyr")
 ensurePkg("corrplot")
 ensurePkg("scales")
@@ -36,8 +37,7 @@ validation <- train[-trainI, ]
 
 Examining only the working training set, I find that a number of factors consist of nothing but "#DIV/O" Excel errors, blanks and NAs, so these are excluded. Additionally, the summary variables (e.g., avg, stdev) and variables associated with the test (names, timeseries) are dropped. This leaves 71 potentially useful variables, so I also look for near-zero covariates and eliminate those, leaving 53 variables.
 
-```{r exploreAndCleanData, include=F}
-# Look for skewing among predictors
+```{r exploreAndCleanData, message=F, warning=F}
 workTrain <- training
 
 # Remove summary variables
@@ -85,10 +85,9 @@ missing <- propmiss(workTrain)
 workTrain <- workTrain[,-as.integer(rownames(missing[missing$propmiss > 0.9,]))]
 
 # Look for variables with just a few NAs and impute (none left so no changes made)
-propmiss(workTrain)[2] > 0
+table(propmiss(workTrain)[2] > 0)
 
 # Remove variables that have too few values (zero covariates)
-#saveMetrics=T will give a data frame with frequency, %unique, actual zeroVar and nzv
 nsv <- nearZeroVar(workTrain, saveMetrics = F)
 workTrain <- workTrain[,-nsv]
 ```
@@ -97,21 +96,23 @@ workTrain <- workTrain[,-nsv]
 Comfortable for the moment with our 52 input and one output variables, I will test three classification models: a decision tree, a boosting model (AdaBoost) and random forest. 
 
 ###Decision Tree
-After setting the seed and training a tree with cross validation, the result is a tree with only 48.85% accuracy (note no 'D' in the end leafs). 
+After setting the seed and training a tree with cross validation, the result is a tree with only 48.85% accuracy (note no 'D' is classified in any node). 
 
-```{r basicTree, include=F}
+```{r basicTree, message=F, warning=F}
 ensurePkg("rattle")
+2
 set.seed(42)
-cvCtrl <- trainControl(method = "repeatedcv", repeats = 3)
-fitTree <- train(classe ~ ., method = "rpart", data = workTrain, trControl = cvCtrl)
+ctrl <- trainControl(method = "repeatedcv", repeats = 3)
+# trainControl() will default to k=10
+fitTree <- train(classe ~ ., method = "rpart", data = workTrain, trControl = ctrl)
 fancyRpartPlot(fitTree$finalModel)
 predFitTree <- predict(fitTree, validation)
-confusionMatrix(predFitTree, validation$classe)$overall #48.85% accuracy
+treeMatrix <- confusionMatrix(predFitTree, validation$classe)$overall
 ```
 
 ###AdaBoost
-Training an AdaBoost model and then running it against the validation set results in much better accuracy of 93%. It is run after setting up a cluster of CPU cores to enable parallel processing to reduce compute time.
-```{r adaBoost, include=F}
+I next trained an AdaBoost model using K-fold cross validation on the training set with k=5. Running the result against the validation set results in much better accuracy of 93%.
+```{r adaBoost, message=F, warning=F}
 ensurePkg("adabag")
 ensurePkg("doParallel")
 corecount <- detectCores()
@@ -121,113 +122,52 @@ getDoParWorkers()
 set.seed(42)
 fitAB <- boosting(classe ~ ., data = workTrain)
 stopCluster(cl)
-set.seed(42)
-fitABPred <- predict.boosting(fitAB, validation)
+
+fitABPred <- predict(fitAB, validation)
 fitABPred$confusion
-1-fitABPred$error #93% accuracy
+fitABPred$error
 ```
 
 ###Random Forest
-Before settling on AdaBoost as the winning model, I train and run a random forest, resulting in the best off-the-bat accuracy of the three (99.5%) with lower out-of-sample error rate also (0.57%).
-```{r randomForest, include=F}
-ensurePkg("randomForest")
-set.seed(42)
-fitRF <- randomForest(classe ~ ., importance = T, data=workTrain) #OOB=0.57%
-#fitRFT <- train(classe ~ ., importance = T, method = "rf", data = workTrain) #OOB=0.71%
-fitRF$confusion
-fitRF
-set.seed(42)
-predictFitRF <- predict(fitRF, validation)
-confusionMatrix(predictFitRF, validation$classe) #99.5% accuracy
-
-
-#predictFitRFT <- predict(fitRFT, validation)
-#confusionMatrix(predictFitRFT, validation$classe) #99.35% accuracy
-```
-
-##Model Selection
-Plotting the confusion matrices, we can see visually what the accuracy and out-of-sample error rates tell us: random forest does a terrific job of predicting the `classe` output variable and will therefore be our model to tune and apply to the testing dataset.
-```{r modelSelect, include=F}
-par(mfrow=c(1,3))
-plot(confusionMatrix(predFitTree, validation$classe)[[2]], main="Confusion Matrix: Decision Tree")
-plot(fitABPred$confusion, main="Confusion Matrix: AdaBoost")
-plot(confusionMatrix(predictFitRF, validation$classe)[[2]], main = "Confusion Matrix: Random Forest")
-par(mfrow=c(1,1))
-```
-
-##Tune Winning Model
-Having decided to proceed with a random forest model, I tune it to see if I can make it more parsimonious without sacrificing accuracy or increasing error rates. First, I took the number of trees grown from default 500 to 2,000
-```{r tuneTrees, include=F}
-# Try different ntrees, mtry, vs. default of mtry=sqrt(p), ntree=500
-# High ntree test
-set.seed(42)
-fitRFTrees <- randomForest(classe ~ ., importance = T, ntree=2000, data=workTrain) #OOB=0.47%
-confusionMatrix(predict(fitRFTrees, validation), validation$classe) #99.5% accuracy
-# fitRFTrees$err.rate shows the OOB plateaus around 0.0054 at ~150 trees
-
-# Confirmed also with the plot
-plot(fitRF, main="Random Forest Error Rates")
-legend("topright", colnames(fitRF$err.rate), col=1:6, cex=0.8, fill=1:6)
-```
-
-Then I experimented with varying the number of variables sampled at each split (`mtry`), first maxing it out to 52, the number of input variables, essentially making it a bagging model. This increased the error rate so I used `tuneRF()` to find the optimal value for `mtry`, settling on 10.
-```{r tuneMtrys, warning=F, message=F}
-# First mtry is max, aka bagging
-set.seed(42)
-fitRFBag <- randomForest(classe ~ ., importance = T, mtry=52, data=workTrain) #OOB=1.7%
-confusionMatrix(predict(fitRFBag, validation), validation$classe) #98.5% accuracy
-# Use tuneRF to find optimal mtry number
-set.seed(42)
-tuneRF(workTrain[,-53], workTrain[,53], mtryStart = 7, stepFactor = 1.5, ntreeTry = 200)
-```
-
-I also tried Principal Component Analysis but found the error rate much higher than the random forest results already obtained so I elected not to include it.
-```{r tunePCA, warning=F, message=F}
-# Try PCA
-set.seed(42)
-pca <- prcomp(workTrain[, -53])
-summary(pca)
-# Picked top 18 to get 99% of variance
-preProc <- preProcess(workTrain[, -53], method="pca", pcaComp = 19)
-trainPC <- predict(preProc, workTrain[, -53])
-fitRFPC <- randomForest(workTrain$classe ~ ., method = "rf", data = trainPC)
-print(fitRFPC) #OOB is much higher than straight RF, so no need to validate
-```
-
-Combining the above refinements, I re-train the model, which results in a model retaining 99.5% accuracy and an out-of-bounds estimate of error of 0.6%.
-```{r tuneFinal, warning=F, message=F}
-set.seed(42)
-fitRFTuned <- randomForest(classe ~ ., importance=T, ntree=150, mtry=10, data=workTrain)
-tunedMatrix <- confusionMatrix(predict(fitRFTuned, validation), validation$classe)
-```
-
-##Out of Sample Error
-To get as solid of an out-of-sample error estimate as possible, I trained a random forest model on the full, original, unmodified training set using k-fold cross validation with k=5. 
-
-```{r sampleError, warning=F, message=F}
-
-
-
+Before settling on AdaBoost as the winning model, I train and run a random forest, resulting in the best off-the-bat accuracy of the three (99.2% on training set, 99.4% on validation set). It is run after setting up a cluster of CPU cores to enable parallel processing to reduce compute time.
+```{r randomForest, message=F, warning=F}
 corecount <- detectCores()
 cl <- makeCluster(corecount * 0.75)
 registerDoParallel(cl)
 getDoParWorkers()
-trainer <- trainControl(method="repeatedcv", number=10)
 set.seed(42)
-fitErrorFinal <- train(classe ~ ., importance=T, trainControl=trainer, ntree=150, method="rf", mtry=10, data = training)
+fitRF <- train(classe ~ ., importance = T, method = "rf", trControl = ctrl, data = workTrain) #mtry=2 is best
 stopCluster(cl)
-# Out-of-Sample error is 1-accuracy
+fitRF$finalModel
+fitRF
+
+predictFitRF <- predict(fitRF, validation)
+rfMatrix <- confusionMatrix(predictFitRF, validation$classe)
 ```
 
-This cross validation results in an out-of-sample error rate of `r percent(1-fitErrorFinal$results[3,2])` (1-highest accuracy), estimated using cross validation.
-NO! ALL THIS IS IS A CROSS VALIDATED RANDOM FOREST FROM ORIGINAL TRAINING SET...COULD HAVE DONE THIS AT THE BEGINNING AND BEEN DONE WITH IT.
+##Model Selection
+Plotting the confusion matrices, we can see visually what the accuracy and out-of-sample error rates tell us: random forest does a terrific job of predicting the `classe` output variable and will therefore be our model to tune and apply to the testing dataset.
+```{r modelSelect, message=F, warning=F}
+par(mfrow=c(1,3))
+plot(treeMatrix[[2]], main="Confusion Matrix: Decision Tree")
+plot(fitABPred$confusion, main="Confusion Matrix: AdaBoost")
+plot(rfMatrix[[2]], main = "Confusion Matrix: Random Forest")
+par(mfrow=c(1,1))
+```
+
+##Out of Sample Error
+I used k-fold cross-validation with k=10 and number of repeats equal to three when training the random forest. Thanks to the cross-validation, that out-of-box error rate estimate of 0.72% is a good estimate of the model's out-of-sample error rate. Additionally, by running that model on the validation set (which had **not** been used for training), we get a true out-of-sample error estimate of `r percent(1 - rfMatrix$overall[[1]])` (1 - highest accuracy):
+
+```{r sampleError, warning=F, message=F}
+rfMatrix$overall
+```
 
 ##Test
 Finally, I run the trained and tuned random forest model on the test data, predicting the 'classe' for each of the 20 observations and submit for validation.
-```{r testAndSubmit, include=F}
+```{r testAndSubmit, message=F, warning=F}
 # Run test
 # Create character vector with 20 predictions, in order
-answers <- predict(fitRFTuned, testing)
+answers <- predict(fitRF, testing)
 
 # Then create and write files
 pml_write_files <- function(x) {
