@@ -157,7 +157,6 @@ par(mfrow=c(1,1))
 
 ##Out of Sample Error
 I used k-fold cross-validation with k=10 and number of repeats equal to three when training the random forest. Thanks to the cross-validation, that out-of-box error rate estimate of 0.72% is a good estimate of the model's out-of-sample error rate. Additionally, by running that model on the validation set (which had **not** been used for training), we get a true out-of-sample error estimate of `r percent(1 - rfMatrix$overall[[1]])` (1 - highest accuracy):
-
 ```{r sampleError, warning=F, message=F}
 rfMatrix$overall
 ```
