@@ -1,7 +1,7 @@
 ---
 title: "Machine Learning Project"
 author: "Wally Thornton"
-date: "November 25, 2015"
+date: "November 20, 2015"
 output: html_document
 ---
 ##Executive Summary
@@ -96,7 +96,7 @@ workTrain <- workTrain[,-nsv]
 Comfortable for the moment with our 52 input and one output variables, I will test three classification models: a decision tree, a boosting model (AdaBoost) and random forest. 
 
 ###Decision Tree
-After setting the seed and training a tree with cross validation, the result is a tree with only 48.85% accuracy (note no 'D' is classified in any node). 
+After setting the seed and training a tree with k-fold cross validation (k of 10, repeated three times), the result is a tree with only 48.85% accuracy (note no 'D' is classified in any node). 
 
 ```{r basicTree, message=F, warning=F}
 ensurePkg("rattle")
@@ -107,7 +107,7 @@ ctrl <- trainControl(method = "repeatedcv", repeats = 3)
 fitTree <- train(classe ~ ., method = "rpart", data = workTrain, trControl = ctrl)
 fancyRpartPlot(fitTree$finalModel)
 predFitTree <- predict(fitTree, validation)
-treeMatrix <- confusionMatrix(predFitTree, validation$classe)$overall
+treeMatrix <- confusionMatrix(predFitTree, validation$classe)
 ```
 
 ###AdaBoost
@@ -129,7 +129,7 @@ fitABPred$error
 ```
 
 ###Random Forest
-Before settling on AdaBoost as the winning model, I train and run a random forest, resulting in the best off-the-bat accuracy of the three (99.2% on training set, 99.4% on validation set). It is run after setting up a cluster of CPU cores to enable parallel processing to reduce compute time.
+Before settling on AdaBoost as the winning model, I train and run a random forest, **again using k-fold cross validation, with k=10, repeated three times**. This results in the best off-the-bat accuracy of the three (99.2% on training set, 99.4% on validation set). It is run after setting up a cluster of CPU cores to enable parallel processing to reduce compute time.
 ```{r randomForest, message=F, warning=F}
 corecount <- detectCores()
 cl <- makeCluster(corecount * 0.75)
@@ -156,9 +156,12 @@ par(mfrow=c(1,1))
 ```
 
 ##Out of Sample Error
-I used k-fold cross-validation with k=10 and number of repeats equal to three when training the random forest. Thanks to the cross-validation, that out-of-box error rate estimate of 0.72% is a good estimate of the model's out-of-sample error rate. Additionally, by running that model on the validation set (which had **not** been used for training), we get a true out-of-sample error estimate of `r percent(1 - rfMatrix$overall[[1]])` (1 - highest accuracy):
+I used **k-fold cross-validation with k=10 and number of repeats equal to three when training the random forest**. Thanks to the cross-validation, that out-of-box error rate estimate of 0.72% is a good estimate of the model's out-of-sample error rate. Additionally, by running that cross-validated model on the validation set (which had **not** been used for training), we get an accurate **out-of-sample error estimate of `r percent(1 - rfMatrix$overall[[1]])`** (1 - highest accuracy):
 ```{r sampleError, warning=F, message=F}
 rfMatrix$overall
+
+## Pulls just accuracy and kappa
+postResample(predictFitRF, validation$classe)
 ```
 
 ##Test
@@ -179,4 +182,4 @@ pml_write_files <- function(x) {
 pml_write_files(answers)
 ```
 
-The result is correct identification of all 20, supporting our modeling efforts.
+The result is correct identification of all 20, supporting my modeling decisions and reinforcing that my low out-of-sample error rate was a valid estimate. 
